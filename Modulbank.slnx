@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="Application/Application.csproj" Id="3befec6a-eed7-4b64-ab64-5cc41e187f66" />
+  <Project Path="docker-compose.dcproj">
+    <Build />
+  </Project>
+  <Project Path="Domain/Domain.csproj" />
+  <Project Path="Infrastructure/Infrastructure.csproj" Id="7f030253-06b3-4ab1-98bd-41f011075935" />
+  <Project Path="PaymentService/PaymentService.csproj" Id="93b3b33f-f7f5-4392-bdbf-87a15e8e27aa" />
+</Solution>
