@@ -108,18 +108,22 @@
 ## 🚀 Запуск
 
 # Клонировать репозиторий
+```bash
 git clone https://github.com/ArkturQI/Modulbank.git
 cd Modulbank
-
+```
 # Запустить все сервисы
+```bash
 docker compose up --build
-
+```
 # Остановка контейнеров
+```bash
 docker compose down
-
+```
 # Остановка + удаление томов (сброс БД)
+```bash
 docker compose down -v
-
+```
 ---
 
 ## 📑 Сквозной сценарий проверки (CLI)
