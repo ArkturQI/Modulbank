@@ -1,7 +1,9 @@
 ﻿using Application.DTOs;
+using Application.Exceptions;
 using Application.Interfaces;
 using Domain.Entities;
 using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
 
 namespace Application.Services;
 
@@ -16,60 +18,62 @@ public class OperationService : IOperationService
 
     public async Task<OperationResponse> CreateOperationAsync(CreateOperationRequest request, CancellationToken ct = default)
     {
-        // Generate OperationId if not provided (idempotent creation)
         var operationId = request.OperationId ?? Guid.NewGuid().ToString();
 
-        // Check if operation already exists (idempotency)
         var existing = await _repository.GetByIdAsync(operationId, ct);
         if (existing != null)
         {
-            return MapToResponse(existing);
+            throw new ConflictException($"Operation with id {operationId} already exists");
         }
 
-        // Create new operation
         var operation = Operation.Create(operationId);
         await _repository.AddAsync(operation, ct);
 
         return MapToResponse(operation);
     }
 
-    public async Task SubmitOperationAsync(string operationId, CancellationToken ct = default)
+    public async Task<(Operation Operation, bool IsFirstSubmission)> SubmitOperationAsync(string operationId, CancellationToken ct = default)
     {
         var operation = await _repository.GetByIdAsync(operationId, ct)
-            ?? throw new InvalidOperationException($"Operation {operationId} not found");
+            ?? throw new NotFoundException($"Operation {operationId} not found");
 
-        // Idempotency: if already in final state, do nothing
-        if (operation.Status == OperationStatus.Completed || operation.Status == OperationStatus.Rejected)
+        if (operation.Status is OperationStatus.Completed or OperationStatus.Rejected or OperationStatus.Processing)
         {
-            return;
+            return (operation, false);
         }
 
-        // Idempotency: if already processing, do nothing
-        if (operation.Status == OperationStatus.Processing)
-        {
-            return;
-        }
-
-        // Change status to Processing
         operation.ChangeStatus(OperationStatus.Processing, "Submit called");
-        await _repository.SaveChangesAsync(ct);
+
+        try
+        {
+            await _repository.SaveChangesAsync(ct);
+            return (operation, true);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Race condition fallback: another request updated the row simultaneously.
+            var updatedOperation = await _repository.GetByIdAsync(operationId, ct)
+                ?? throw new NotFoundException($"Operation {operationId} not found");
+
+            return (updatedOperation, false);
+        }
     }
 
     public async Task ProcessReceiptAsync(ReceiptRequest request, CancellationToken ct = default)
     {
         var operation = await _repository.GetByIdAsync(request.OperationId, ct)
-            ?? throw new InvalidOperationException($"Operation {request.OperationId} not found");
+            ?? throw new NotFoundException($"Operation {request.OperationId} not found");
 
-        // Protect against race conditions: ProviderPaymentId must not be overwritten
         if (!operation.TrySetProviderPaymentId(request.ProviderPaymentId))
         {
-            throw new InvalidOperationException(
-                $"ProviderPaymentId mismatch. Existing: {operation.ProviderPaymentId}, New: {request.ProviderPaymentId}");
+            throw new ConflictException($"ProviderPaymentId mismatch. Existing: {operation.ProviderPaymentId}, New: {request.ProviderPaymentId}");
         }
 
-        // Ignore late receipts if operation already in final state
-        if (operation.Status == OperationStatus.Completed || operation.Status == OperationStatus.Rejected)
+        if (operation.Status is OperationStatus.Completed or OperationStatus.Rejected)
         {
+            // Log the ignored late receipt in the event history without changing the final status
+            operation.RecordIgnoredReceipt(request.Result);
+            await _repository.SaveChangesAsync(ct);
             return;
         }
 
@@ -93,7 +97,7 @@ public class OperationService : IOperationService
     public async Task<IReadOnlyList<OperationEventResponse>> GetOperationEventsAsync(string operationId, CancellationToken ct = default)
     {
         var operation = await _repository.GetByIdAsync(operationId, ct)
-            ?? throw new InvalidOperationException($"Operation {operationId} not found");
+            ?? throw new NotFoundException($"Operation {operationId} not found");
 
         return operation.Events
             .Select(e => new OperationEventResponse

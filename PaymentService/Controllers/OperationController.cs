@@ -1,7 +1,6 @@
 ﻿using Application.DTOs;
 using Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
-using System.Text;
 
 namespace PaymentService.Controllers;
 
@@ -10,140 +9,102 @@ namespace PaymentService.Controllers;
 public class OperationController : ControllerBase
 {
     private readonly IOperationService _service;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OperationController> _logger;
 
-    public OperationController(
-        IOperationService service,
-        IHttpClientFactory httpClientFactory,
-        ILogger<OperationController> logger)
+    public OperationController(IOperationService service, ILogger<OperationController> logger)
     {
         _service = service;
-        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
     /// <summary>
-    /// Creates a new payment operation
+    /// Creates a new payment operation.
     /// </summary>
+    /// <remarks>Returns 409 Conflict if an operation with the same OperationId already exists.</remarks>
     [HttpPost("operations")]
     [ProducesResponseType(typeof(OperationResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<OperationResponse>> CreateOperation(
-        [FromBody] CreateOperationRequest request,
-        CancellationToken ct)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<OperationResponse>> CreateOperation([FromBody] CreateOperationRequest request, CancellationToken ct)
     {
-        _logger.LogInformation("Creating operation with id: {OperationId}", request.OperationId);
-
         var result = await _service.CreateOperationAsync(request, ct);
-
-        _logger.LogInformation("Operation created: {Id}", result.Id);
-
         return CreatedAtAction(nameof(GetOperation), new { id = result.Id }, result);
     }
 
     /// <summary>
-    /// Submits operation to provider (idempotent)
+    /// Submits the operation to the provider.
     /// </summary>
+    /// <remarks>
+    /// Returns 202 Accepted on the first call. 
+    /// Returns 200 OK with the current operation state on subsequent calls (idempotent).
+    /// </remarks>
     [HttpPost("operations/{id}/submit")]
+    [ProducesResponseType(typeof(OperationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> SubmitOperation(string id, CancellationToken ct)
     {
-        _logger.LogInformation("Submitting operation: {OperationId}", id);
+        var (operation, isFirstSubmission) = await _service.SubmitOperationAsync(id, ct);
 
-        await _service.SubmitOperationAsync(id, ct);
-
-        // Send request to provider with idempotency headers
-        var client = _httpClientFactory.CreateClient("ProviderClient");
-        var requestMessage = new HttpRequestMessage(HttpMethod.Post, "/payments");
-
-        requestMessage.Headers.Add("Idempotency-Key", id);
-        requestMessage.Headers.Add("X-Correlation-ID", id);
-
-        requestMessage.Content = new StringContent(
-            $"{{\"operationId\": \"{id}\"}}",
-            Encoding.UTF8,
-            "application/json");
-
-        var response = await client.SendAsync(requestMessage, ct);
-
-        // Log provider response but don't fail - status will be updated via callback
-        if (!response.IsSuccessStatusCode)
+        if (isFirstSubmission)
         {
-            _logger.LogWarning(
-                "Provider returned {StatusCode} for operation {OperationId}",
-                response.StatusCode,
-                id);
-        }
-        else
-        {
-            _logger.LogInformation("Provider accepted operation: {OperationId}", id);
+            return Accepted();
         }
 
-        return Accepted();
+        return Ok(new OperationResponse
+        {
+            Id = operation.Id.ToString(),
+            Status = operation.Status.ToString(),
+            ProviderPaymentId = operation.ProviderPaymentId,
+            CreatedAt = operation.CreatedAt
+        });
     }
 
     /// <summary>
-    /// Processes receipt callback from provider
+    /// Processes a receipt callback from the payment provider.
     /// </summary>
+    /// <remarks>
+    /// Returns 204 No Content on success. 
+    /// Returns 409 Conflict if the ProviderPaymentId does not match the existing one.
+    /// </remarks>
     [HttpPost("receipts")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> ProcessReceipt(
-        [FromBody] ReceiptRequest request,
-        CancellationToken ct)
+    public async Task<IActionResult> ProcessReceipt([FromBody] ReceiptRequest request, CancellationToken ct)
     {
-        _logger.LogInformation(
-            "Processing receipt for operation: {OperationId}, provider: {ProviderId}, result: {Result}",
-            request.OperationId,
-            request.ProviderPaymentId,
-            request.Result);
-
         await _service.ProcessReceiptAsync(request, ct);
-
-        _logger.LogInformation("Receipt processed successfully: {OperationId}", request.OperationId);
-
         return NoContent();
     }
 
     /// <summary>
-    /// Gets operation details by id
+    /// Retrieves operation details by its OperationId.
     /// </summary>
     [HttpGet("operations/{id}")]
     [ProducesResponseType(typeof(OperationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<OperationResponse>> GetOperation(string id, CancellationToken ct)
     {
-        _logger.LogDebug("Getting operation: {OperationId}", id);
-
         var result = await _service.GetOperationAsync(id, ct);
-        if (result == null)
-        {
-            _logger.LogWarning("Operation not found: {OperationId}", id);
-            return NotFound();
-        }
-
+        if (result == null) return NotFound();
         return Ok(result);
     }
 
     /// <summary>
-    /// Gets operation event history
+    /// Retrieves the event history (audit log) for a specific operation.
     /// </summary>
     [HttpGet("operations/{id}/events")]
     [ProducesResponseType(typeof(IReadOnlyList<OperationEventResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<IReadOnlyList<OperationEventResponse>>> GetOperationEvents(string id, CancellationToken ct)
     {
-        _logger.LogDebug("Getting events for operation: {OperationId}", id);
-
         var result = await _service.GetOperationEventsAsync(id, ct);
         return Ok(result);
     }
 
     /// <summary>
-    /// Health check endpoint
+    /// Health check endpoint for orchestrators (Docker/K8s) and monitoring.
     /// </summary>
     [HttpGet("health")]
     [ProducesResponseType(StatusCodes.Status200OK)]

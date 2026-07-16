@@ -3,6 +3,7 @@ using Application.Services;
 using Infrastructure.Persistence;
 using Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
+using PaymentService.Background; 
 using PaymentService.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,7 +17,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<PaymentsDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? "Host=db;Port=5432;Database=payments;Username=postgres;Password=140302" 
+        ?? "Host=db;Port=5432;Database=payments;Username=postgres;Password=140302"
     ));
 
 // 3. Linking interfaces to implementations (DI)
@@ -31,6 +32,9 @@ builder.Services.AddHttpClient("ProviderClient", client =>
         ?? "http://localhost:8081"
     );
 });
+
+// 5. Register background service for recovery after restart (Reviewer requirement)
+builder.Services.AddHostedService<ProviderSubmissionBackgroundService>();
 
 var app = builder.Build();
 
@@ -47,12 +51,12 @@ using (var scope = app.Services.CreateScope())
         try
         {
             await dbContext.Database.MigrateAsync();
-            Console.WriteLine("✅ Migrations applied successfully");
+            Console.WriteLine("Migrations applied successfully");
             break;
         }
         catch (Exception ex) when (i < 9)
         {
-            Console.WriteLine($"⏳ Attempt {i + 1} failed: {ex.Message}. Retrying in 3s...");
+            Console.WriteLine($"Attempt {i + 1} failed: {ex.Message}. Retrying in 3s...");
             await Task.Delay(3000);
         }
     }

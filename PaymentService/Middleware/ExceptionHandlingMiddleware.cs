@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Text.Json;
+using Application.Exceptions;
 
 namespace PaymentService.Middleware;
 
@@ -20,10 +21,15 @@ public class ExceptionHandlingMiddleware
         {
             await _next(context);
         }
-        catch (InvalidOperationException ex)
+        catch (NotFoundException ex)
         {
-            _logger.LogWarning(ex, "Business logic error: {Message}", ex.Message);
+            _logger.LogWarning(ex, "Not found: {Message}", ex.Message);
             await HandleExceptionAsync(context, ex, HttpStatusCode.NotFound);
+        }
+        catch (ConflictException ex)
+        {
+            _logger.LogWarning(ex, "Conflict: {Message}", ex.Message);
+            await HandleExceptionAsync(context, ex, HttpStatusCode.Conflict);
         }
         catch (Exception ex)
         {
