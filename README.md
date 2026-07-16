@@ -109,7 +109,7 @@
 
 # Клонировать репозиторий
 ```bash
-git clone https://github.com/your-username/modulbank-payment-service.git
+git clone https://github.com/ArkturQI/Modulbank.git
 cd modulbank-payment-service
 ```
 # Запустить все сервисы
