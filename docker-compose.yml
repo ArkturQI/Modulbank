@@ -10,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payments"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -18,25 +18,30 @@ services:
   provider-simulator:
     image: ghcr.io/fintech-dev-lab/internship-provider-simulator:v0.2.0
     environment:
-      CALLBACK_URL: http://paymentservice:8080/receipts
+      - CALLBACK_URL=http://candidate-service:8080/receipts
     ports:
       - "8081:8081"
+    depends_on:
+      candidate-service:
+        condition: service_started
 
-  paymentservice:
+  candidate-service:
     build:
       context: .
       dockerfile: PaymentService/Dockerfile
     environment:
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=payments;Username=postgres;Password=140302"
-      ProviderSettings__BaseUrl: "http://provider-simulator:8081"
-      ASPNETCORE_ENVIRONMENT: "Development"
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=payments;Username=postgres;Password=140302
+      - ASPNETCORE_ENVIRONMENT=Development
+      - PROVIDER_URL=http://provider-simulator:8081
+      - ProviderSettings__BaseUrl=http://provider-simulator:8081
     ports:
       - "8080:8080"
+    volumes:
+      - candidate-data:/data
     depends_on:
       db:
         condition: service_healthy
-      provider-simulator:
-        condition: service_started
 
 volumes:
   pgdata:
+  candidate-data:
