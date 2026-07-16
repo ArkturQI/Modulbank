@@ -28,7 +28,8 @@ public class OperationController : ControllerBase
     public async Task<ActionResult<OperationResponse>> CreateOperation([FromBody] CreateOperationRequest request, CancellationToken ct)
     {
         var result = await _service.CreateOperationAsync(request, ct);
-        return CreatedAtAction(nameof(GetOperation), new { id = result.Id }, result);
+        // IMPORTANT: Use OperationId for the route parameter, not the internal Guid Id
+        return CreatedAtAction(nameof(GetOperation), new { id = result.OperationId }, result);
     }
 
     /// <summary>
@@ -51,13 +52,18 @@ public class OperationController : ControllerBase
             return Accepted();
         }
 
-        return Ok(new OperationResponse
+        // Map domain entity to response DTO for idempotent subsequent calls
+        var response = new OperationResponse
         {
-            Id = operation.Id.ToString(),
-            Status = operation.Status.ToString(),
-            ProviderPaymentId = operation.ProviderPaymentId,
-            CreatedAt = operation.CreatedAt
-        });
+            OperationId = operation.OperationId,
+            Amount = operation.Amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            Currency = operation.Currency,
+            Description = operation.Description,
+            Status = operation.Status.ToString().ToUpper(),
+            ProviderPaymentId = operation.ProviderPaymentId
+        };
+
+        return Ok(response);
     }
 
     /// <summary>

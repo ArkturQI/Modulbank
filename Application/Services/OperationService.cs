@@ -1,4 +1,5 @@
-﻿using Application.DTOs;
+﻿using System.Globalization;
+using Application.DTOs;
 using Application.Exceptions;
 using Application.Interfaces;
 using Domain.Entities;
@@ -26,8 +27,13 @@ public class OperationService : IOperationService
             throw new ConflictException($"Operation with id {operationId} already exists");
         }
 
+        if (!decimal.TryParse(request.Amount, NumberStyles.Any, CultureInfo.InvariantCulture, out var decimalAmount))
+        {
+            throw new ArgumentException("Invalid amount format");
+        }
+
         // Domain-driven design: encapsulate creation logic and invariants within the domain entity
-        var operation = Operation.Create(operationId, request.Amount, request.Currency);
+        var operation = Operation.Create(operationId, decimalAmount, request.Currency, request.Description);
         await _repository.AddAsync(operation, ct);
 
         return MapToResponse(operation);
@@ -102,28 +108,30 @@ public class OperationService : IOperationService
         var operation = await _repository.GetByIdAsync(operationId, ct)
             ?? throw new NotFoundException($"Operation {operationId} not found");
 
-        return operation.Events
-            .Select(e => new OperationEventResponse
-            {
-                Id = e.Id.ToString(),
-                OldStatus = e.OldStatus.ToString(),
-                NewStatus = e.NewStatus.ToString(),
-                Reason = e.Reason,
-                Timestamp = e.Timestamp
-            })
-            .ToList();
+        // Sort chronologically and generate monotonic EventId dynamically to match API contract
+        var sortedEvents = operation.Events.OrderBy(e => e.Timestamp).ToList();
+
+        return sortedEvents.Select((e, index) => new OperationEventResponse
+        {
+            EventId = index + 1,
+            Type = e.NewStatus.ToString().ToUpper(),
+            FromStatus = e.OldStatus == OperationStatus.None ? null : e.OldStatus.ToString().ToUpper(),
+            ToStatus = e.NewStatus.ToString().ToUpper(),
+            Message = e.Reason,
+            OccurredAt = e.Timestamp
+        }).ToList();
     }
 
     private static OperationResponse MapToResponse(Operation operation)
     {
         return new OperationResponse
         {
-            Id = operation.Id.ToString(),
-            Status = operation.Status.ToString(),
-            ProviderPaymentId = operation.ProviderPaymentId,
-            CreatedAt = operation.CreatedAt,
-            Amount = operation.Amount,
-            Currency = operation.Currency
+            OperationId = operation.OperationId,
+            Amount = operation.Amount.ToString("F2", CultureInfo.InvariantCulture),
+            Currency = operation.Currency,
+            Description = operation.Description,
+            Status = operation.Status.ToString().ToUpper(),
+            ProviderPaymentId = operation.ProviderPaymentId
         };
     }
 }

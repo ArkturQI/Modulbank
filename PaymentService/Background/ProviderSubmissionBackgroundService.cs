@@ -1,6 +1,9 @@
 ﻿using System.Text;
 using System.Text.Json;
 using Application.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace PaymentService.Background;
 
@@ -67,25 +70,22 @@ public class ProviderSubmissionBackgroundService : BackgroundService
 
                             try
                             {
-                                // Safely extract the provider's payment ID to link the external transaction with our internal operation
-                                using var doc = JsonDocument.Parse(responseContent);
-                                if (doc.RootElement.TryGetProperty("providerPaymentId", out var providerIdProp))
+                                // Case-insensitive deserialization prevents failures if provider uses PascalCase or snake_case
+                                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var providerData = JsonSerializer.Deserialize<ProviderResponse>(responseContent, options);
+
+                                if (providerData != null && !string.IsNullOrEmpty(providerData.ProviderPaymentId))
                                 {
-                                    var providerPaymentId = providerIdProp.GetString();
+                                    // Create a new scope for the update to ensure fresh DbContext tracking
+                                    using var updateScope = _serviceProvider.CreateScope();
+                                    var updateRepo = updateScope.ServiceProvider.GetRequiredService<IOperationRepository>();
 
-                                    if (!string.IsNullOrEmpty(providerPaymentId))
+                                    var opToUpdate = await updateRepo.GetByIdAsync(operation.OperationId, stoppingToken);
+                                    if (opToUpdate != null && opToUpdate.TrySetProviderPaymentId(providerData.ProviderPaymentId))
                                     {
-                                        // Create a new scope for the update to ensure fresh DbContext tracking
-                                        using var updateScope = _serviceProvider.CreateScope();
-                                        var updateRepo = updateScope.ServiceProvider.GetRequiredService<IOperationRepository>();
-
-                                        var opToUpdate = await updateRepo.GetByIdAsync(operation.OperationId, stoppingToken);
-                                        if (opToUpdate != null && opToUpdate.TrySetProviderPaymentId(providerPaymentId))
-                                        {
-                                            await updateRepo.SaveChangesAsync(stoppingToken);
-                                            _logger.LogInformation("Operation {Id} linked with ProviderPaymentId {ProviderId}",
-                                                operation.OperationId, providerPaymentId);
-                                        }
+                                        await updateRepo.SaveChangesAsync(stoppingToken);
+                                        _logger.LogInformation("Operation {Id} linked with ProviderPaymentId {ProviderId}",
+                                            operation.OperationId, providerData.ProviderPaymentId);
                                     }
                                 }
                             }
@@ -121,3 +121,6 @@ public class ProviderSubmissionBackgroundService : BackgroundService
         }
     }
 }
+
+// Helper record for robust, case-insensitive JSON deserialization
+internal record ProviderResponse(string? ProviderPaymentId);

@@ -2,9 +2,10 @@
 
 public class OperationEventResponse
 {
-    public string Id { get; set; } = string.Empty;
-    public string OldStatus { get; set; } = string.Empty;
-    public string NewStatus { get; set; } = string.Empty;
-    public string Reason { get; set; } = string.Empty;
-    public DateTimeOffset Timestamp { get; set; }
+    public int EventId { get; set; }
+    public string Type { get; set; } = string.Empty;
+    public string? FromStatus { get; set; }
+    public string ToStatus { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset OccurredAt { get; set; }
 }

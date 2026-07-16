@@ -8,19 +8,20 @@ public class Operation
 
     public Guid Id { get; private set; }
     public string OperationId { get; private set; } = string.Empty;
+    public decimal Amount { get; private set; }
+    public string Currency { get; private set; } = string.Empty;
+    public string Description { get; private set; } = string.Empty; 
+
     public string? ProviderPaymentId { get; private set; }
     public OperationStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
-    public byte[] RowVersion { get; private set; } = new byte[0]; //for optimistic concurrency
-
-    public decimal Amount { get; private set; }
-    public string Currency { get; private set; } = string.Empty;
+    public byte[] RowVersion { get; private set; } = new byte[0];
 
     private readonly List<OperationEvent> _events = new();
     public IReadOnlyCollection<OperationEvent> Events => _events.AsReadOnly();
 
-    public static Operation Create(string operationId, decimal amount, string currency)
+    public static Operation Create(string operationId, decimal amount, string currency, string description)
     {
         var operation = new Operation
         {
@@ -28,6 +29,7 @@ public class Operation
             OperationId = operationId,
             Amount = amount,
             Currency = currency,
+            Description = description, 
             Status = OperationStatus.Created,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
