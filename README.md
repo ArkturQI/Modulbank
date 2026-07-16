@@ -1,84 +1,130 @@
 # Modulbank Платёжный сервис
 
+Сервис для проведения платёжных операций через внешнего провайдера с идемпотентностью, обработкой сбоев и постоянным хранением данных.
+
+---
+
 ## Технологии
 
-- ASP.NET Core 10
-- Entity Framework Core 10.0.10
-- Entity Framework Core Design 10.0.10
-- Microsoft.AspNetCore.OpenApi 10.0.9
-- Npgsql.EntityFrameworkCore.PostgreSQL 10.0.3
-- FluentValidation 12.1.1
-- AutoMapper 16.2.0
-- Swashbuckle.AspNetCore (Swagger) 10.2.3
+- **ASP.NET Core 10**
+- **Entity Framework Core 10.0.10** + **Design 10.0.10**
+- **Npgsql.EntityFrameworkCore.PostgreSQL 10.0.3** (PostgreSQL)
+- **Microsoft.AspNetCore.OpenApi 10.0.9**
+- **Swashbuckle.AspNetCore (Swagger) 10.2.3**
+- **AutoMapper 16.2.0**
+- **FluentValidation 12.1.1**
+- **Docker & Docker Compose**
 
+---
 
 ## Архитектура
 
-Проект построен по принципам чистой архитектуры (Clean Architecture) с разделением на слои:
+Проект построен по принципам **Чистой архитектуры** с разделением на слои:
 ```
-   Domain                   
-   └── Entities              # Сущности (Operation, OperationEvent)
-   └── Enums                 # OperationStatus (CREATED, PROCESSING, COMPLETED, REJECTED)
+📦 Domain
+   └── Entities
+   │   ├── Operation.cs          # Агрегат (Id, Status, Amount, RowVersion)
+   │   └── OperationEvent.cs     # Событие (EventId, FromStatus, ToStatus)
+   └── Enums
+       └── OperationStatus.cs    # CREATED, PROCESSING, COMPLETED, REJECTED
 
-   Infrastructure           
-   └── Persistence           # AppDbContext, конфигурация EF Core
-   └── Migrations            # Миграции PostgreSQL
-   └── Repositories          # Реализация IOperationRepository
+📦 Application
+   └── DTOs
+   │   ├── CreateOperationRequest.cs
+   │   ├── OperationResponse.cs
+   │   ├── OperationEventResponse.cs
+   │   └── ReceiptRequest.cs
+   └── Exceptions
+   │   ├── ConflictException.cs
+   │   └── NotFoundException.cs
+   └── Interfaces
+   │   ├── IOperationService.cs
+   │   └── IOperationRepository.cs
+   └── Services
+       └── OperationService.cs   # Бизнес-логика с конкурентностью
 
-    PaymentService          
-   └── Controllers           # OperationController (все эндпоинты)
-   └── Middleware            # Глобальная обработка ошибок
-   └── appsettings.json      # Конфигурация
-   └── Dockerfile            # Сборка образа
-   └── Program.cs            # Настройка хоста и DI
+📦 Infrastructure
+   └── Persistence
+   │   ├── PaymentsDbContext.cs  # EF Core + Fluent API
+   │   └── Migrations            # Миграции PostgreSQL
+   └── Repositories
+       └── OperationRepository.cs # Реализация IOperationRepository
 
-   Application 
-   └── DTOs                  # CreateOperationRequest, ReceiptRequest, OperationResponse
-   └── Interfaces            # IOperationService, IOperationRepository
-   └── Services              # OperationService (бизнес-логика)
+📦 PaymentService (Web API)
+   └── Background
+   │   └── ProviderSubmissionBackgroundService.cs # Восстановление отправок
+   └── Controllers
+   │   └── OperationController.cs # Все REST эндпоинты
+   └── Middleware
+   │   └── ExceptionHandlingMiddleware.cs # Глобальная обработка ошибок
+   └── appsettings.json           # Конфигурация
+   └── Dockerfile                 # Сборка образа
+   └── Program.cs                 # Настройка DI + автоматические миграции
 ```
 
 ## Поток обработки операции
-
-1. POST /operations          → CREATED (сохранение в БД)
-2. POST /{id}/submit         → PROCESSING (отправка провайдеру)
-3. POST /payments (provider) → Idempotency-Key: operationId
-4. POST /receipts (callback) → COMPLETED / REJECTED
-5. GET /operations/{id}      → Финальный статус
-
-----------------------------------------------------------------
-Идемпотентность через Idempotency-Key
-----------------------------------------------------------------
-Оптимистичная обработка конкурентных запросов
-----------------------------------------------------------------
-Постоянное хранилище (PostgreSQL) с переживанием перезапусков
-----------------------------------------------------------------
-Callback-квитанции определяют финальный статус
-----------------------------------------------------------------
-Обработка ранних и повторных квитанций
-----------------------------------------------------------------
-
-🚀 Запуск
-
-1. git clone
-```bash
-git clone https://github.com/your-username/modulbank-payment-service.git
-cd modulbank-payment-service
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. CREATE OPERATION │
+│ POST /operations │
+│ → Returns: 201 Created (operationId, status: CREATED) │
+│ → Duplicate: 409 Conflict │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. SUBMIT TO PROVIDER │
+│ POST /operations/{id}/submit │
+│ → First call: 202 Accepted (status → PROCESSING) │
+│ → Repeat call: 200 OK (current state) │
+│ → Background service sends with Idempotency-Key │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. PROVIDER CALLBACK │
+│ POST /receipts │
+│ → Sets providerPaymentId │
+│ → Status: COMPLETED or REJECTED │
+│ → Returns: 204 No Content │
+│ → Late/duplicate receipts: 204 (ignored, logged) │
+│ → Mismatched providerPaymentId: 409 Conflict │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ 4. QUERY OPERATION STATUS │
+│ GET /operations/{id} │
+│ → Returns: Full operation details + current status │
+│ │
+│ GET /operations/{id}/events │
+│ → Returns: Complete event history (audit trail) │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌────────────────────────────────────────────────────────────┐
+│ 5. HEALTH CHECK │
+│ GET /health │
+│ → Returns: 200 OK │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-2. Запуск Docker Compose
+## 🚀 Запуск
+
+# Клонировать репозиторий
+```bash
+git clone https://github.com/ArkturQI/Modulbank.git
+cd Modulbank
+```
+# Запустить все сервисы
 ```bash
 docker-compose up --build
 ```
-
-3. Swagger UI
+# Открыть Swagger UI
 ```bash
 http://localhost:8080/swagger
 ```
-
-4. Остановка и очистка
+# Остановка контейнеров
 ```bash
-docker-compose down        # Остановить контейнеры
-docker-compose down -v     # Остановить и удалить тома с БД
+docker-compose down
 ```
-
+# Остановка + удаление томов (сброс БД)
+```bash
+docker-compose down -v
+```
