@@ -14,15 +14,20 @@ public class Operation
     public DateTimeOffset UpdatedAt { get; private set; }
     public byte[] RowVersion { get; private set; } = new byte[0]; //for optimistic concurrency
 
+    public decimal Amount { get; private set; }
+    public string Currency { get; private set; } = string.Empty;
+
     private readonly List<OperationEvent> _events = new();
     public IReadOnlyCollection<OperationEvent> Events => _events.AsReadOnly();
 
-    public static Operation Create(string operationId)
+    public static Operation Create(string operationId, decimal amount, string currency)
     {
         var operation = new Operation
         {
             Id = Guid.NewGuid(),
             OperationId = operationId,
+            Amount = amount,
+            Currency = currency,
             Status = OperationStatus.Created,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -35,14 +40,12 @@ public class Operation
     public void ChangeStatus(OperationStatus newStatus, string reason)
     {
         if (Status == newStatus) return;
-
         var oldStatus = Status;
         Status = newStatus;
         UpdatedAt = DateTimeOffset.UtcNow;
         _events.Add(new OperationEvent(Id, oldStatus, newStatus, reason));
     }
 
-    // Added specifically to log ignored receipts without changing the actual status
     public void RecordIgnoredReceipt(string result)
     {
         _events.Add(new OperationEvent(Id, Status, Status, $"Ignored late receipt: {result}"));

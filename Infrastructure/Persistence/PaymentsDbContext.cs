@@ -22,14 +22,15 @@ namespace Infrastructure.Persistence
                 entity.ToTable("operations");
                 entity.HasKey(e => e.Id);
 
-                // Prevent EF Core from overriding the manually generated Guid
                 entity.Property(e => e.Id).ValueGeneratedNever();
-
-                // Enable optimistic concurrency control to prevent race conditions on concurrent submits
                 entity.Property(e => e.RowVersion).IsRowVersion();
 
                 entity.Property(e => e.OperationId).HasColumnName("operation_id").IsRequired().HasMaxLength(100);
                 entity.Property(e => e.ProviderPaymentId).HasColumnName("provider_payment_id").HasMaxLength(100);
+
+                // Amount and Currency mapping
+                entity.Property(e => e.Amount).HasColumnName("amount").HasPrecision(18, 2);
+                entity.Property(e => e.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
 
                 entity.Property(e => e.Status).HasColumnName("status").HasConversion<string>();
                 entity.Property(e => e.CreatedAt).HasColumnName("created_at");

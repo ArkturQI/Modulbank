@@ -26,7 +26,8 @@ public class OperationService : IOperationService
             throw new ConflictException($"Operation with id {operationId} already exists");
         }
 
-        var operation = Operation.Create(operationId);
+        // Domain-driven design: encapsulate creation logic and invariants within the domain entity
+        var operation = Operation.Create(operationId, request.Amount, request.Currency);
         await _repository.AddAsync(operation, ct);
 
         return MapToResponse(operation);
@@ -51,7 +52,8 @@ public class OperationService : IOperationService
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Race condition fallback: another request updated the row simultaneously.
+            // Handle race conditions: if a concurrent request already transitioned the status, 
+            // fetch the latest state to return an accurate result without failing the request.
             var updatedOperation = await _repository.GetByIdAsync(operationId, ct)
                 ?? throw new NotFoundException($"Operation {operationId} not found");
 
@@ -71,7 +73,8 @@ public class OperationService : IOperationService
 
         if (operation.Status is OperationStatus.Completed or OperationStatus.Rejected)
         {
-            // Log the ignored late receipt in the event history without changing the final status
+            // Idempotency & Audit: safely ignore late receipts for terminal states, 
+            // but still record them in the event history for debugging and auditability.
             operation.RecordIgnoredReceipt(request.Result);
             await _repository.SaveChangesAsync(ct);
             return;
@@ -118,7 +121,9 @@ public class OperationService : IOperationService
             Id = operation.Id.ToString(),
             Status = operation.Status.ToString(),
             ProviderPaymentId = operation.ProviderPaymentId,
-            CreatedAt = operation.CreatedAt
+            CreatedAt = operation.CreatedAt,
+            Amount = operation.Amount,
+            Currency = operation.Currency
         };
     }
 }

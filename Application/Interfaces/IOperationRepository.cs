@@ -8,6 +8,6 @@ public interface IOperationRepository
     Task AddAsync(Operation operation, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 
-    // Required for background recovery service to find stuck operations
-    Task<IReadOnlyList<Operation>> GetPendingSubmissionsAsync(CancellationToken ct = default);
+    // For background recovery service
+    Task<IReadOnlyList<Operation>> GetProcessingOperationsAsync(CancellationToken ct = default);
 }
