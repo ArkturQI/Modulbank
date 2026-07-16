@@ -108,23 +108,36 @@
 ## 🚀 Запуск
 
 # Клонировать репозиторий
-```bash
 git clone https://github.com/ArkturQI/Modulbank.git
 cd Modulbank
-```
+
 # Запустить все сервисы
-```bash
-docker-compose up --build
-```
-# Открыть Swagger UI
-```bash
-http://localhost:8080/swagger
-```
+docker compose up --build
+
 # Остановка контейнеров
-```bash
-docker-compose down
-```
+docker compose down
+
 # Остановка + удаление томов (сброс БД)
+docker compose down -v
+
+---
+
+## 📑 Сквозной сценарий проверки (CLI)
+
+После старта контейнеров выполните эти команды в терминале для проверки базового сценария:
+
 ```bash
-docker-compose down -v
+# 1. Проверка готовности (200 OK)
+curl -i http://localhost:8080/health
+
+# 2. Создание операции (201 Created)
+curl -i -X POST http://localhost:8080/operations \
+  -H "Content-Type: application/json" \
+  -d '{"operationId":"test-op-999","amount":"1000.00","currency":"RUB","description":"Оплата заказа"}'
+
+# 3. Запуск отправки (202 Accepted)
+curl -i -X POST http://localhost:8080/operations/test-op-999/submit
+
+# 4. Проверка финального статуса (через пару секунд после авто-коллбэка от симулятора)
+curl -i http://localhost:8080/operations/test-op-999
 ```
